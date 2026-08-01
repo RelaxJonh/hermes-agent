@@ -1019,8 +1019,8 @@ def image_generate_tool(
 
     except Exception as e:
         generation_time = (datetime.datetime.now() - start_time).total_seconds()
-        error_msg = f"Error generating image: {str(e)}"
-        logger.error("%s", error_msg, exc_info=True)
+        error_msg = f"Error generating image: {str(e)[:200]}"
+        logger.error("%s", error_msg)
 
         response_data = {
             "success": False,

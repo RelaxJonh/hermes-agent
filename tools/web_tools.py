@@ -729,7 +729,7 @@ def web_search_tool(query: str, limit: int = 5) -> str:
         return result_json
 
     except Exception as e:
-        error_msg = f"Error searching web: {str(e)}"
+        error_msg = f"Error searching web: {str(e)[:200]}"
         logger.debug("%s", error_msg)
 
         debug_call_data["error"] = error_msg
@@ -1035,7 +1035,7 @@ async def web_extract_tool(
         return cleaned_result
             
     except Exception as e:
-        error_msg = f"Error extracting content: {str(e)}"
+        error_msg = f"Error extracting content: {str(e)[:200]}"
         logger.debug("%s", error_msg)
         
         debug_call_data["error"] = error_msg
