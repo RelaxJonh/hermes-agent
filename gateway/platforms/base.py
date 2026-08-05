@@ -4336,8 +4336,16 @@ class BasePlatformAdapter(ABC):
         return validate_media_delivery_path(path)
 
     @staticmethod
-    def filter_media_delivery_paths(media_files) -> List[Tuple[str, bool]]:
-        """Drop unsafe MEDIA paths and normalize accepted paths."""
+    def filter_media_delivery_paths(
+        media_files,
+        _rejections: Optional[List[str]] = None,
+    ) -> List[Tuple[str, bool]]:
+        """Drop unsafe MEDIA paths and normalize accepted paths.
+
+        When *_rejections* is provided, raw paths that fail validation are
+        appended to it so callers can surface a session-visible note instead
+        of silently dropping the attachment (#78932).
+        """
         safe_media: List[Tuple[str, bool]] = []
         for media_path, is_voice in media_files or []:
             raw = str(media_path)
@@ -4346,6 +4354,8 @@ class BasePlatformAdapter(ABC):
                 safe_media.append((safe_path, bool(is_voice)))
             else:
                 logger.warning("Skipping unsafe MEDIA directive path: %s", _log_safe_path(raw))
+                if _rejections is not None:
+                    _rejections.append(raw)
         return safe_media
 
     @staticmethod
@@ -5881,7 +5891,8 @@ class BasePlatformAdapter(ABC):
 
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)
-                media_files = self.filter_media_delivery_paths(media_files)
+                _media_rejections: list = []
+                media_files = self.filter_media_delivery_paths(media_files, _rejections=_media_rejections)
 
                 # Do NOT deduplicate MEDIA tags against prior turns here.
                 # The auto-append path in GatewayRunner._run_agent_inner already
@@ -5900,6 +5911,17 @@ class BasePlatformAdapter(ABC):
                 # with an unknown extension is intentionally left in the body for
                 # extract_local_files below to pick up rather than silently dropped (#34517).
                 text_content = _strip_media_directives(text_content).strip()
+                if _media_rejections:
+                    _rejection_note = (
+                        "\n\n[MEDIA delivery note: "
+                        + "; ".join(
+                            f"path '{p}' rejected (outside allowlist or unsafe)"
+                            for p in _media_rejections
+                        )
+                        + " — no file was attached. "
+                        "Use a path inside the allowed directories or upload the file directly.]"
+                    )
+                    text_content = f"{text_content}{_rejection_note}" if text_content else _rejection_note.strip()
                 if images:
                     logger.info("[%s] extract_images found %d image(s) in response (%d chars)", self.name, len(images), len(response))
 

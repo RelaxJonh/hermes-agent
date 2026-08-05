@@ -19120,7 +19120,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
 
             media_files, cleaned = adapter.extract_media(response)
-            media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+            _media_rejections: list = []
+            media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files, _rejections=_media_rejections)
+            if _media_rejections:
+                _rejection_note = (
+                    "\n\n[MEDIA delivery note: "
+                    + "; ".join(
+                        f"path '{p}' rejected (outside allowlist or unsafe)"
+                        for p in _media_rejections
+                    )
+                    + " — no file was attached. "
+                    "Use a path inside the allowed directories or upload the file directly.]"
+                )
+                cleaned = f"{cleaned}{_rejection_note}" if cleaned else _rejection_note.strip()
             # Do NOT deduplicate explicit MEDIA tags against prior turns here
             # (#73771). This rescan is already EXPLICIT-ONLY (see docstring):
             # a MEDIA: directive in the final streamed reply is the model
@@ -19342,8 +19354,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if response:
                 media_files, response = adapter.extract_media(response)
                 from gateway.platforms.base import BasePlatformAdapter
-                media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+                _media_rejections: list = []
+                media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files, _rejections=_media_rejections)
                 images, text_content = adapter.extract_images(response)
+                if _media_rejections:
+                    _rejection_note = (
+                        "\n\n[MEDIA delivery note: "
+                        + "; ".join(
+                            f"path '{p}' rejected (outside allowlist or unsafe)"
+                            for p in _media_rejections
+                        )
+                        + " — no file was attached.]"
+                    )
+                    text_content = f"{text_content}{_rejection_note}" if text_content else _rejection_note.strip()
 
                 preview = prompt[:60] + ("..." if len(prompt) > 60 else "")
                 header = f'✅ Background task complete\nPrompt: "{preview}"\n\n'
