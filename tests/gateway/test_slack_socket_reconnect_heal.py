@@ -270,6 +270,70 @@ class TestSocketModeTeardown:
             f"{session.ws_connect_after_close} time(s)"
         )
 
+    @pytest.mark.asyncio
+    async def test_task_rebound_during_close_is_drained(self, adapter):
+        """A task rebound onto a client attribute during close() must not survive.
+
+        The pre-close snapshot cannot see it: ``connect()`` rebinds
+        ``current_session_monitor`` / ``message_receiver`` to fresh tasks on
+        success, so a task that appears while ``close()`` is awaiting is in no
+        snapshot and nothing cancels it. Parked in ``connect()`` it then spins
+        forever -- that loop is ``while True`` with no ``closed`` check, so every
+        retry hits the dead shared session, logs, and sleeps ``ping_interval``.
+
+        The symptom is unbounded growth rather than a single stray retry, so the
+        assertion that matters is that the counter stops moving. With
+        ``ping_interval`` defaulting to 10s in ``AsyncSocketModeHandler``, one
+        wedged loop is ~6 log lines/min until the process restarts; inbound
+        traffic keeps working throughout, which is what makes it easy to
+        misdiagnose as a dead socket.
+        """
+
+        class _RebindingClient(_FakeSocketModeClient):
+            """Rebinds a task attribute mid-teardown, the way connect() does."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.rebound = None
+
+            async def close(self) -> None:
+                self.closed = True
+                for task in (
+                    self.message_processor,
+                    self.current_session_monitor,
+                    self.message_receiver,
+                ):
+                    if task is not None:
+                        task.cancel()
+                # Appears after the adapter took its snapshot.
+                self.rebound = asyncio.create_task(self.connect())
+                self.current_session_monitor = self.rebound
+                await asyncio.sleep(0)  # let it reach the retry loop
+                await self.aiohttp_client_session.close()
+
+        handler = _FakeHandler()
+        handler.client = _RebindingClient()
+        client = handler.client
+
+        _attach(adapter, handler)
+        await asyncio.sleep(0.01)
+
+        await adapter._stop_socket_mode_handler()
+        await asyncio.sleep(0.03)
+
+        assert client.rebound is not None, "test did not exercise the rebind path"
+        assert client.rebound.done(), (
+            "a task rebound during close() outlived teardown and will keep "
+            "retrying against the closed session"
+        )
+
+        before = client.aiohttp_client_session.ws_connect_after_close
+        await asyncio.sleep(0.05)
+        after = client.aiohttp_client_session.ws_connect_after_close
+        assert after == before, (
+            f"retries against the closed session are still accumulating ({before} -> {after})"
+        )
+
 
 class TestSocketModeRestart:
 
