@@ -1601,6 +1601,19 @@ def _iter_top_level_shell_segments(command: str):
         elif quote:
             if char == quote:
                 quote = None
+        elif char == "#" and (index == 0 or command[index - 1] in " \t;&|(\n"):
+            # Shell comment: skip to end of line.  An unquoted apostrophe
+            # inside a comment (e.g. "ubuntu's") would otherwise flip the
+            # single-quote tracker and desync every later quote boundary,
+            # causing _quoted_grep_pattern_spans to report a false
+            # "malformed" and fail-closed the whole command (#108707).
+            if start < index:
+                yield command[start:index]
+            nl = command.find("\n", index)
+            if nl == -1:
+                return
+            start = nl + 1
+            index = nl
         elif char in {"'", '"'}:
             quote = char
         elif char in ";&|\n":
